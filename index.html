@@ -1558,12 +1558,13 @@ function genDeck(L, want) {
   } else if (L.kind === 'exact') {
     for (let i = 0; i < L.targets.length; i++) push(L.targets[i].s, L.targets[i].r);
 
-    /* 干扰牌：near 时一半做成"同花色相邻点数"或"同点数换个花色" */
+    /* 干扰牌：near 时一半做成"同花色相邻点数"或"同点数换个花色"；
+       far 时把这类最容易看混的组合整体避开，保证轻松档一眼能分辨 */
     const otherSuits = [0, 1, 2, 3];
     let guard = 0;
     while (out.length < wantN && guard++ < 2400) {
       let s, r;
-      if (mix === 'near' && Math.random() < 0.50) {
+      if (mix === 'near' && Math.random() < 0.58) {
         const t = pick(L.targets);
         if (Math.random() < 0.5) {
           s = t.s;
@@ -1575,6 +1576,15 @@ function genDeck(L, want) {
       } else {
         s = Math.floor(Math.random() * 4);
         r = 1 + Math.floor(Math.random() * 13);
+        if (mix === 'far') {
+          let close = false;
+          for (let i = 0; i < L.targets.length; i++) {
+            const t = L.targets[i];
+            if (r === t.r) close = true;                       /* 同点数换花色 */
+            if (s === t.s && dist13(r, t.r) <= 2) close = true; /* 同花色相邻点数 */
+          }
+          if (close) continue;
+        }
       }
       let isT = false;
       for (let i = 0; i < L.targets.length; i++) {
