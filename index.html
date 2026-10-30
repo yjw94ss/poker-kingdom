@@ -49,6 +49,7 @@ canvas#gl { position: absolute; inset: 0; width: 100%; height: 100%; display: bl
   background: rgba(255,255,255,.18); box-shadow: inset 0 0 0 1px rgba(255,255,255,.14);
   transition: background .25s ease, transform .25s ease;
 }
+.linkcount { font-size: 12.5px; font-weight: 700; color: #ffd79a; letter-spacing: .02em; }
 .pip.done { background: #ffce6b; box-shadow: 0 0 8px rgba(255,206,107,.8); transform: scale(1.15); }
 
 .hud-right { display: flex; align-items: center; gap: 8px; pointer-events: auto; }
@@ -316,9 +317,12 @@ h1.title {
         <span>&#9824;</span><span>&#9829;</span><span>&#9827;</span><span>&#9830;</span>
       </div>
       <h1 class="title">扑克王国<br>找牌大冒险</h1>
-      <p class="subtitle">认花色、认点数、找配对<br>8 个小关卡，边玩边把一副扑克认全</p>
+      <p class="subtitle">认花色、认点数、找配对<br>8 个闯关 + 3 局连连看，边玩边把一副扑克认全</p>
       <button class="btn" id="btnStart">开 始 冒 险</button>
-      <div><button class="btn ghost" id="btnContinue">继续第 2 关</button></div>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn ghost" id="btnLink">连 连 看</button>
+        <button class="btn ghost" id="btnContinue">继续第 2 关</button>
+      </div>
       <p class="hintline">点一张牌 · 它会告诉你这是什么牌</p>
     </div>
   </div>
@@ -340,7 +344,7 @@ h1.title {
       <div class="brand">
         <span>&#9824;</span><span>&#9829;</span><span>&#9827;</span><span>&#9830;</span>
       </div>
-      <h1 class="title">全部通关！</h1>
+      <h1 class="title" id="endTitle">全部通关！</h1>
       <div class="stars" id="endStars"></div>
       <div class="clear-sub" id="endSub"></div>
       <button class="btn" id="btnAgain">再 来 一 遍</button>
@@ -1044,7 +1048,7 @@ function fitCameraToCards(cards, targetVec, safeBot) {
      这样小屏、横屏、字体折行都不会被浮层压住卡片 */
   const SAFE_X = 0.84;
   let SAFE_TOP = 0.64;
-  let SAFE_BOT = (typeof safeBot === 'number') ? safeBot : -0.94;
+  let SAFE_BOT = (typeof safeBot === 'number') ? safeBot : -0.90;
 
   const H = window.innerHeight;
   const promptEl = document.getElementById('prompt');
@@ -1195,6 +1199,9 @@ const G = {
   memLock: false,
   studyBack: -1,
   hover: null,
+  mode: 'level',
+  hoverZ: 0.30,
+  linkRound: 0,
   fps: 0,
   level: 0
 };
@@ -1347,7 +1354,9 @@ function createCard(suit, rank) {
     flying: false,
     zLerp: 0,
     phase: Math.random() * Math.PI * 2,
-    glow: 0
+    glow: 0,
+    glowCur: 0,
+    sel: false
   };
 
   face.userData.card = card;
@@ -1481,8 +1490,8 @@ function promptSpeech(L) {
    这里按最低一排的底边反解牌阵高度，让底边永远浮在桌面上方。 */
 const TILT = 0.55;
 
-function placeBoard(rows) {
-  const sy = CARD_H + GAP_Y;
+function placeBoard(rows, syOverride) {
+  const sy = syOverride || (CARD_H + GAP_Y);
   const localBottom = -((rows - 1) / 2) * sy - CARD_H / 2;
   const by = 0.30 - localBottom * Math.cos(TILT);
   board.rotation.x = -TILT;
@@ -1504,6 +1513,10 @@ function pickCols(n, L) {
 /* ---------------- 开始一关 ---------------- */
 function startLevel(idx) {
   clearDecor();
+  if (typeof clearLinkPath === 'function') clearLinkPath();
+  G.mode = 'level';
+  G.hoverZ = 0.30;
+  if (typeof LINK !== 'undefined') LINK.active = false;
   TW.kill('card');
   TW.kill('ring');
   clearCards();
@@ -1872,21 +1885,543 @@ function studyClick(card) {
 function onCardClick(card) {
   if (!card) return;
   if (G.state === 'study') { studyClick(card); return; }
+  if (G.state === 'link') { linkClick(card); return; }
   clickCard(card);
 }
 
 function updateCards(dt, t) {
+  const live = (G.state === 'playing' || G.state === 'study' || G.state === 'link');
   for (let i = 0; i < G.cards.length; i++) {
     const c = G.cards[i];
     if (c.flying || c.busy) continue;
     if (!c.root.visible) continue;
 
-    const wantZ = (G.hover === c && c.alive && (G.state === 'playing' || G.state === 'study')) ? 0.30 : 0;
+    let wantZ = 0;
+    if (c.sel) wantZ = 0.22;
+    else if (G.hover === c && c.alive && live) wantZ = G.hoverZ;
+
     c.zLerp += (wantZ - c.zLerp) * Math.min(1, dt * 14);
     const bob = Math.sin(t * 1.5 + c.phase) * 0.014;
     c.root.position.set(c.basePos.x, c.basePos.y + bob, c.basePos.z + c.zLerp);
     c.root.scale.setScalar(1 + c.zLerp * 0.055);
+
+    /* 选中高亮（只有连连看会用到） */
+    const g = c.sel ? 0.30 : 0;
+    if (c.glowCur !== g) {
+      c.glowCur = g;
+      c.faceMat.emissive.setRGB(g, g * 0.72, g * 0.18);
+      if (c.edgeMat) c.edgeMat.emissive.setRGB(g * 0.8, g * 0.55, g * 0.1);
+    }
   }
+}
+
+
+/* ==================================================================
+   link.js — 连连看：网格 / 通路判定 / 连通动画 / 重排
+   ================================================================== */
+
+const LINK = {
+  active: false,
+  grid: null,        /* (rows+2) x (cols+2)，外圈为可通行的空位 */
+  rows: 0,
+  cols: 0,
+  sx: 1.06,          /* 牌位间距（比闯关模式更紧凑，形成"牌阵"） */
+  sy: 1.48,
+  sel: null,
+  left: 0,
+  busy: false,
+  pathGroup: null
+};
+
+/* 每局棋盘尺寸；竖屏单独给一套（列数少、行数多） */
+const LINK_ROUNDS = [
+  { cols: 4, rows: 3, p: { cols: 3, rows: 4 } },   /* 12 张 / 6 对 */
+  { cols: 5, rows: 4, p: { cols: 4, rows: 5 } },   /* 20 张 / 10 对 */
+  { cols: 6, rows: 4, p: { cols: 4, rows: 6 } }    /* 24 张 / 12 对 */
+];
+
+/* ---------------- 坐标 ---------------- */
+function cellPos(r, c) {
+  return {
+    x: (c - 1 - (LINK.cols - 1) / 2) * LINK.sx,
+    y: ((LINK.rows - 1) / 2 - (r - 1)) * LINK.sy
+  };
+}
+
+function cellEmpty(grid, rows, cols, r, c) {
+  if (r < 0 || c < 0 || r > rows + 1 || c > cols + 1) return false;
+  return grid[r][c] === null;
+}
+
+/* 两点在同一直线上且中间全空 */
+function straightClear(grid, rows, cols, a, b) {
+  if (a.r === b.r) {
+    const lo = Math.min(a.c, b.c), hi = Math.max(a.c, b.c);
+    if (lo === hi) return false;
+    for (let c = lo + 1; c < hi; c++) if (!cellEmpty(grid, rows, cols, a.r, c)) return false;
+    return true;
+  }
+  if (a.c === b.c) {
+    const lo = Math.min(a.r, b.r), hi = Math.max(a.r, b.r);
+    if (lo === hi) return false;
+    for (let r = lo + 1; r < hi; r++) if (!cellEmpty(grid, rows, cols, r, a.c)) return false;
+    return true;
+  }
+  return false;
+}
+
+/* 返回拐点序列（含首尾），不可达返回 null。最多 2 次转弯，可绕棋盘外圈 */
+function pathBetween(grid, rows, cols, a, b) {
+  if (a.r === b.r && a.c === b.c) return null;
+
+  /* 0 拐 */
+  if (straightClear(grid, rows, cols, a, b)) return [a, b];
+
+  /* 1 拐 */
+  const k1 = { r: a.r, c: b.c };
+  const k2 = { r: b.r, c: a.c };
+  const corners1 = [k1, k2];
+  for (let i = 0; i < 2; i++) {
+    const k = corners1[i];
+    if (!cellEmpty(grid, rows, cols, k.r, k.c)) continue;
+    if (straightClear(grid, rows, cols, a, k) && straightClear(grid, rows, cols, k, b)) {
+      return [a, k, b];
+    }
+  }
+
+  /* 2 拐：先直着伸到一个空位 p，再从 p 一次转弯接到 b */
+  for (let r = 0; r <= rows + 1; r++) {
+    for (let c = 0; c <= cols + 1; c++) {
+      if (!cellEmpty(grid, rows, cols, r, c)) continue;
+      if (r !== a.r && c !== a.c) continue;
+      const p = { r: r, c: c };
+      if (!straightClear(grid, rows, cols, a, p)) continue;
+
+      const q1 = { r: p.r, c: b.c };
+      const q2 = { r: b.r, c: p.c };
+      const qs = [q1, q2];
+      for (let i = 0; i < 2; i++) {
+        const q = qs[i];
+        if (q.r === p.r && q.c === p.c) continue;
+        if (!cellEmpty(grid, rows, cols, q.r, q.c)) continue;
+        if (straightClear(grid, rows, cols, p, q) && straightClear(grid, rows, cols, q, b)) {
+          return [a, p, q, b];
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/* 当前还有多少对可消 */
+function countMoves(grid, rows, cols) {
+  const byKey = {};
+  for (let r = 1; r <= rows; r++) {
+    for (let c = 1; c <= cols; c++) {
+      const t = grid[r][c];
+      if (!t) continue;
+      const k = t.suit + '_' + t.rank;
+      if (!byKey[k]) byKey[k] = [];
+      byKey[k].push(t);
+    }
+  }
+  let n = 0;
+  const keys = Object.keys(byKey);
+  for (let i = 0; i < keys.length; i++) {
+    const arr = byKey[keys[i]];
+    for (let x = 0; x < arr.length; x++) {
+      for (let y = x + 1; y < arr.length; y++) {
+        if (pathBetween(grid, rows, cols, arr[x], arr[y])) n++;
+      }
+    }
+  }
+  return n;
+}
+
+function anyMove(grid, rows, cols) {
+  return countMoves(grid, rows, cols) > 0;
+}
+
+/* ---------------- 连线特效 ---------------- */
+function ensurePathGroup() {
+  if (LINK.pathGroup) return;
+  LINK.pathGroup = new THREE.Group();
+  LINK.pathGroup.position.z = 0.13;
+  board.add(LINK.pathGroup);
+}
+
+function clearLinkPath() {
+  if (!LINK.pathGroup) return;
+  for (let i = LINK.pathGroup.children.length - 1; i >= 0; i--) {
+    const m = LINK.pathGroup.children[i];
+    LINK.pathGroup.remove(m);
+    if (m.geometry) m.geometry.dispose();
+    if (m.material) m.material.dispose();
+  }
+}
+
+function drawLinkPath(pts) {
+  ensurePathGroup();
+  clearLinkPath();
+  if (!pts || pts.length < 2) return;
+
+  /* 三层叠加模拟辉光：白芯 + 金中层 + 橙外晕 */
+  const matCore = new THREE.MeshBasicMaterial({
+    color: 0xffffff, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+  });
+  const matMid = new THREE.MeshBasicMaterial({
+    color: 0xffd166, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+  });
+  const matOut = new THREE.MeshBasicMaterial({
+    color: 0xff8c1a, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+  });
+
+  const segs = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = cellPos(pts[i].r, pts[i].c);
+    const b = cellPos(pts[i + 1].r, pts[i + 1].c);
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 0.001) continue;
+
+    const g = new THREE.Group();
+    g.position.set((a.x + b.x) / 2, (a.y + b.y) / 2, 0);
+    g.rotation.z = Math.atan2(dy, dx);
+
+    const core = new THREE.Mesh(new THREE.PlaneGeometry(len + 0.06, 0.042), matCore);
+    const mid = new THREE.Mesh(new THREE.PlaneGeometry(len + 0.10, 0.115), matMid);
+    const out = new THREE.Mesh(new THREE.PlaneGeometry(len + 0.18, 0.30), matOut);
+    mid.position.z = -0.008;
+    out.position.z = -0.016;
+    g.add(core, mid, out);
+
+    g.scale.x = 0.001;
+    LINK.pathGroup.add(g);
+    segs.push(g);
+  }
+
+  /* 逐段生长 */
+  for (let i = 0; i < segs.length; i++) {
+    (function (m, i) {
+      TW.add({
+        tag: 'link', dur: 0.13, delay: i * 0.07, ease: easeOutCubic,
+        onUpdate: function (k) { m.scale.x = Math.max(0.001, k); }
+      });
+    })(segs[i], i);
+  }
+
+  TW.add({
+    tag: 'link', dur: 0.18,
+    onUpdate: function (k) {
+      matCore.opacity = 0.95 * k;
+      matMid.opacity = 0.50 * k;
+      matOut.opacity = 0.20 * k;
+    }
+  });
+  TW.add({
+    tag: 'link', dur: 0.40, delay: 0.34 + segs.length * 0.07,
+    onUpdate: function (k) {
+      matCore.opacity = 0.95 * (1 - k);
+      matMid.opacity = 0.50 * (1 - k);
+      matOut.opacity = 0.20 * (1 - k);
+    },
+    onComplete: clearLinkPath
+  });
+}
+
+/* ---------------- 开始一局 ---------------- */
+function startLink(round) {
+  clearDecor();
+  TW.kill('card');
+  TW.kill('ring');
+  TW.kill('link');
+  clearLinkPath();
+  clearCards();
+
+  G.mode = 'link';
+  G.linkRound = clamp(round, 0, LINK_ROUNDS.length - 1);
+  LINK.active = true;
+  LINK.sel = null;
+  LINK.busy = false;
+  G.state = 'link';
+  G.wrong = 0;
+  G.combo = 0;
+  G.hoverZ = 0.10;
+
+  const R = LINK_ROUNDS[G.linkRound];
+  const portrait = (window.innerWidth / window.innerHeight) < 0.95;
+  const cols = portrait ? R.p.cols : R.cols;
+  const rows = portrait ? R.p.rows : R.rows;
+  LINK.cols = cols;
+  LINK.rows = rows;
+
+  const total = cols * rows;
+  const pairs = total / 2;
+
+  /* 选 pairs 张互不相同的牌，每张各两张 */
+  const pool = [];
+  for (let s = 0; s < 4; s++) for (let r = 1; r <= 13; r++) pool.push({ s: s, r: r });
+  shuffle(pool);
+  const deck = [];
+  for (let i = 0; i < pairs; i++) { deck.push(pool[i]); deck.push(pool[i]); }
+
+  /* 反复洗牌直到开局有解 */
+  LINK.grid = [];
+  for (let r = 0; r < rows + 2; r++) {
+    const row = [];
+    for (let c = 0; c < cols + 2; c++) row.push(null);
+    LINK.grid.push(row);
+  }
+
+  /* 满盘时可选对很少，开局强制至少 3 个可消对，手感才不至于一上来就卡住 */
+  let bestOrder = null;
+  let bestMoves = -1;
+  for (let t = 0; t < 80; t++) {
+    shuffle(deck);
+    let k = 0;
+    for (let r = 1; r <= rows; r++) {
+      for (let c = 1; c <= cols; c++) {
+        const d = deck[k++];
+        LINK.grid[r][c] = { suit: d.s, rank: d.r, r: r, c: c };
+      }
+    }
+    const m = countMoves(LINK.grid, rows, cols);
+    if (m > bestMoves) { bestMoves = m; bestOrder = deck.slice(); }
+    if (m >= 3) break;
+  }
+  if (bestMoves < 3 && bestOrder) {
+    let k = 0;
+    for (let r = 1; r <= rows; r++) {
+      for (let c = 1; c <= cols; c++) {
+        const d = bestOrder[k++];
+        LINK.grid[r][c] = { suit: d.s, rank: d.r, r: r, c: c };
+      }
+    }
+  }
+
+  /* 生成真正的牌 */
+  for (let r = 1; r <= rows; r++) {
+    for (let c = 1; c <= cols; c++) {
+      const v = LINK.grid[r][c];
+      const card = createCard(v.suit, v.rank);
+      card.r = r;
+      card.c = c;
+      card.sel = false;
+      card.glowCur = 0;
+      board.add(card.root);
+
+      const p = cellPos(r, c);
+      card.basePos.set(p.x, p.y, 0);
+      card.root.position.set(p.x, p.y - 1.1, -1.0);
+      card.root.scale.setScalar(0.55);
+
+      LINK.grid[r][c] = card;
+      G.cards.push(card);
+      G.pickables.push(card.face, card.back);
+    }
+  }
+  pickables = G.pickables;
+
+  LINK.left = total;
+
+  /* 发牌 */
+  let idx = 0;
+  for (let r = 1; r <= rows; r++) {
+    for (let c = 1; c <= cols; c++) {
+      (function (card, i) {
+        card.busy = true;
+        TW.add({
+          tag: 'card', dur: 0.40, delay: i * 0.022, ease: easeOutBack,
+          onUpdate: function (k) {
+            card.root.position.set(card.basePos.x, card.basePos.y - 1.1 * (1 - k), card.basePos.z - 1.0 * (1 - k));
+            card.root.scale.setScalar(0.55 + 0.45 * k);
+          },
+          onComplete: function () {
+            card.root.position.copy(card.basePos);
+            card.root.scale.setScalar(1);
+            card.busy = false;
+          }
+        });
+      })(LINK.grid[r][c], idx++);
+    }
+  }
+
+  const by = placeBoard(rows, LINK.sy);
+  fitCameraToCards(G.cards, new THREE.Vector3(0, by, -0.15));
+
+  UI.enterLink(G.linkRound, pairs);
+  VOICE.say('\u70b9\u4e24\u5f20\u4e00\u6837\u7684\u724c\uff0c\u628a\u5b83\u4eec\u8fde\u8d77\u6765');
+}
+
+/* ---------------- 点击 ---------------- */
+function linkClick(card) {
+  if (G.state !== 'link' || !card || !card.alive || card.busy) return;
+  if (LINK.busy) return;
+
+  SFX.tap();
+  VOICE.say(VOICE.cardName(card.suit, card.rank));
+
+  /* 取消选中 */
+  if (LINK.sel === card) {
+    deselect(card);
+    LINK.sel = null;
+    return;
+  }
+
+  /* 首次选中 */
+  if (!LINK.sel) {
+    LINK.sel = card;
+    card.sel = true;
+    return;
+  }
+
+  const a = LINK.sel;
+  const b = card;
+
+  /* 不是同一张牌 */
+  if (a.suit !== b.suit || a.rank !== b.rank) {
+    SFX.bad();
+    UI.showToast('\u8fd9\u4e24\u5f20\u4e0d\u4e00\u6837\u54e6', 'bad');
+    deselect(a);
+    LINK.sel = b;
+    b.sel = true;
+    return;
+  }
+
+  /* 同牌，找通路 */
+  const path = pathBetween(LINK.grid, LINK.rows, LINK.cols, a, b);
+  if (!path) {
+    SFX.bad();
+    G.wrong++;
+    UI.showToast('\u4e2d\u95f4\u88ab\u6321\u4f4f\u5566\uff0c\u6362\u4e24\u5f20\u8bd5\u8bd5', 'bad');
+    VOICE.say('\u8fd9\u4e24\u5f20\u8fde\u4e0d\u5230');
+    return;
+  }
+
+  /* 消掉 */
+  G.combo++;
+  G.score += 20 + Math.max(0, G.combo - 1) * 2;
+  SFX.good(Math.min(G.combo - 1, 6));
+  VOICE.say(VOICE.cardName(a.suit, a.rank) + '\uff0c\u6d88\u6389\u5566');
+
+  drawLinkPath(path);
+  deselect(a);
+  LINK.sel = null;
+  LINK.busy = true;
+
+  removeTile(a);
+  removeTile(b);
+  UI.updateHud();
+
+  TW.add({
+    tag: 'link', dur: 0.46, delay: 0.12, onUpdate: function () {},
+    onComplete: function () {
+      LINK.busy = false;
+      if (LINK.left <= 0) { linkClear(); return; }
+      if (!anyMove(LINK.grid, LINK.rows, LINK.cols)) reshuffle();
+    }
+  });
+}
+
+function deselect(card) {
+  card.sel = false;
+}
+
+/* ---------------- 消除单张 ---------------- */
+function removeTile(card) {
+  LINK.grid[card.r][card.c] = null;
+  card.alive = false;
+  card.flying = true;
+  card.sel = false;
+  LINK.left--;
+
+  const wp = new THREE.Vector3();
+  const wq = new THREE.Quaternion();
+  card.root.getWorldPosition(wp);
+  card.root.getWorldQuaternion(wq);
+  pulseRing(wp, wq);
+
+  const p0 = card.root.position.clone();
+  TW.add({
+    tag: 'card', dur: 0.34, ease: easeOutCubic,
+    onUpdate: function (k) {
+      card.root.position.set(p0.x, p0.y + k * 0.28, p0.z + k * 0.35);
+      card.spin.rotation.y = k * Math.PI * 0.55;
+      card.root.scale.setScalar(Math.max(0.001, 1 - k * 1.0));
+    },
+    onComplete: function () {
+      card.root.visible = false;
+      card.root.scale.setScalar(1);
+    }
+  });
+}
+
+/* ---------------- 无解重排 ---------------- */
+function reshuffle() {
+  const tiles = G.cards.filter(function (c) { return c.alive; });
+  if (tiles.length < 4) return;
+
+  const cells = tiles.map(function (t) { return { r: t.r, c: t.c }; });
+  let tries = 0;
+  let ok = false;
+
+  while (!ok && tries < 60) {
+    shuffle(cells);
+    for (let r = 1; r <= LINK.rows; r++) {
+      for (let c = 1; c <= LINK.cols; c++) LINK.grid[r][c] = null;
+    }
+    for (let i = 0; i < tiles.length; i++) {
+      tiles[i].r = cells[i].r;
+      tiles[i].c = cells[i].c;
+      LINK.grid[cells[i].r][cells[i].c] = tiles[i];
+    }
+    ok = anyMove(LINK.grid, LINK.rows, LINK.cols);
+    tries++;
+  }
+
+  UI.showToast('\u6ca1\u6709\u80fd\u6d88\u7684\u724c\u4e86\uff0c\u5e2e\u4f60\u91cd\u6392\u4e00\u4e0b', 'bad');
+  VOICE.say('\u91cd\u65b0\u6392\u4e00\u4e0b');
+
+  for (let i = 0; i < tiles.length; i++) {
+    (function (t, i) {
+      const p = cellPos(t.r, t.c);
+      const from = t.basePos.clone();
+      const to = new THREE.Vector3(p.x, p.y, 0);
+      t.basePos.copy(to);
+      t.busy = true;
+      TW.add({
+        tag: 'card', dur: 0.42, delay: i * 0.02, ease: easeInOutCubic,
+        onUpdate: function (k) {
+          t.root.position.set(
+            lerp(from.x, to.x, k),
+            lerp(from.y, to.y, k) + Math.sin(k * Math.PI) * 0.30,
+            0
+          );
+          t.root.scale.setScalar(1 - Math.sin(k * Math.PI) * 0.18);
+        },
+        onComplete: function () {
+          t.root.position.copy(t.basePos);
+          t.root.scale.setScalar(1);
+          t.busy = false;
+        }
+      });
+    })(tiles[i], i);
+  }
+}
+
+/* ---------------- 过关 ---------------- */
+function linkClear() {
+  G.state = 'clear';
+  G.stars = G.wrong === 0 ? 3 : (G.wrong <= 2 ? 2 : 1);
+  SFX.win();
+  VOICE.say('\u5168\u90e8\u6d88\u5b8c\u5566');
+  TW.add({
+    tag: 'link', dur: 0.70, onUpdate: function () {},
+    onComplete: function () { UI.showClear(); }
+  });
 }
 
 
@@ -1916,7 +2451,7 @@ const UI = {
       'promptSub', 'btnSay', 'btnSound', 'btnStudy', 'btnStudyExit', 'toast',
       'scrStart', 'scrClear', 'scrEnd', 'clearStars', 'clearTitle', 'clearSub',
       'btnNext', 'btnReplay', 'btnMenu', 'btnAgain', 'endStars', 'endSub',
-      'btnStart', 'btnContinue', 'studyBar', 'studyName', 'studyHint'];
+      'btnStart', 'btnContinue', 'btnLink', 'endTitle', 'studyBar', 'studyName', 'studyHint'];
     for (let i = 0; i < ids.length; i++) this.el[ids[i]] = document.getElementById(ids[i]);
   },
 
@@ -1976,6 +2511,10 @@ const UI = {
 
   updateHud: function () {
     this.el.scoreNum.textContent = G.score;
+    if (G.mode === 'link') {
+      this.el.pips.innerHTML = '<span class="linkcount">\u5269 ' + Math.max(0, Math.round(LINK.left / 2)) + ' \u5bf9</span>';
+      return;
+    }
     const pips = this.el.pips.children;
     const done = G.total - G.remaining;
     for (let i = 0; i < pips.length; i++) {
@@ -2024,8 +2563,9 @@ const UI = {
   },
 
   showClear: function () {
-    const last = G.level >= LEVELS.length - 1;
     burstConfetti(new THREE.Vector3(0, 3.0, 1.2));
+    if (G.mode === 'link') { this.showLinkClear(); return; }
+    const last = G.level >= LEVELS.length - 1;
     if (last) {
       G.totalStars += G.stars;
       G.unlock = LEVELS.length;
@@ -2047,6 +2587,25 @@ const UI = {
     this.show('scrClear');
   },
 
+  showLinkClear: function () {
+    const last = G.linkRound >= LINK_ROUNDS.length - 1;
+    G.totalStars += G.stars;
+    persist();
+    if (last) {
+      this.el.endTitle.textContent = '\u8fde\u8fde\u770b\u00b7\u5168\u90e8\u901a\u5173\uff01';
+      renderStarsTo(this.el.endStars, 3, true);
+      this.el.endSub.textContent = '\u5171 ' + G.totalStars + ' \u9897\u661f\u661f \u00b7 ' + G.score + ' \u5206';
+      this.show('scrEnd');
+      return;
+    }
+    this.el.clearTitle.textContent = '\u5168\u90e8\u6d88\u5b8c\u5566\uff01';
+    this.el.clearSub.textContent = G.wrong === 0
+      ? '\u4e00\u6b21\u90fd\u6ca1\u9519\uff0c\u773c\u529b\u771f\u597d'
+      : ('\u7528\u9519 ' + G.wrong + ' \u6b21\uff0c\u4e0b\u6b21\u66f4\u5feb');
+    renderStarsTo(this.el.clearStars, G.stars, true);
+    this.show('scrClear');
+  },
+
   renderStars: function (host, n, animate) {
     renderStarsTo(host, n, animate);
   },
@@ -2064,6 +2623,22 @@ const UI = {
     this.el.studyBar.classList.add('on');
     this.el.studyName.textContent = '\u2014';
     this.el.studyHint.textContent = '\u70b9\u4e00\u5f20\u724c\u8bd5\u8bd5';
+    this.flashPrompt();
+  },
+
+  enterLink: function (round, pairs) {
+    this.hideAll();
+    this.clearAlert();
+    this.el.ui.classList.add('on');
+    this.el.hud.classList.add('on');
+    this.el.studyBar.classList.remove('on');
+    this.el.lvLabel.textContent = '\u8fde\u8fde\u770b ' + (round + 1) + ' / ' + LINK_ROUNDS.length;
+    this.el.promptIcon.className = 'pi';
+    this.el.promptIcon.innerHTML = '<span class="blk">\u8fde</span>';
+    this.el.promptMain.textContent = '\u70b9\u4e24\u5f20\u4e00\u6837\u7684\u724c';
+    this.el.promptSub.textContent = '\u8fde\u7ebf\u8f6c\u5f2f\u4e0d\u8d85\u8fc7 2 \u6b21\u5c31\u80fd\u6d88\u6389';
+    this.el.pips.innerHTML = '<span class="linkcount">\u5269 ' + pairs + ' \u5bf9</span>';
+    this.updateHud();
     this.flashPrompt();
   },
 
@@ -2271,21 +2846,36 @@ function boot() {
     if (!SFX.enabled && VOICE.ok) { try { window.speechSynthesis.cancel(); } catch (e) {} }
   });
 
+  /* 连连看入口 */
+  UI.el.btnLink.addEventListener('click', function () {
+    SFX.unlock();
+    G.score = 0;
+    UI.hideAll();
+    startLink(0);
+  });
+
   /* 过关面板 */
   UI.el.btnNext.addEventListener('click', function () {
     SFX.unlock();
     UI.hideAll();
+    if (G.mode === 'link') {
+      startLink(Math.min(G.linkRound + 1, LINK_ROUNDS.length - 1));
+      return;
+    }
     startLevel(Math.min(G.level + 1, LEVELS.length - 1));
   });
   UI.el.btnReplay.addEventListener('click', function () {
     SFX.unlock();
     UI.hideAll();
+    if (G.mode === 'link') { startLink(G.linkRound); return; }
     startLevel(G.level);
   });
   UI.el.btnMenu.addEventListener('click', function () {
     UI.hideAll();
     UI.el.ui.classList.remove('on');
     G.state = 'idle';
+    G.mode = 'level';
+    if (typeof clearLinkPath === 'function') clearLinkPath();
     showDecor();
     UI.show('scrStart');
   });
@@ -2293,6 +2883,7 @@ function boot() {
     SFX.unlock();
     G.score = 0; G.totalStars = 0; G.unlock = 0; persist();
     UI.hideAll();
+    if (G.mode === 'link') { startLink(0); return; }
     startLevel(0);
   });
 
@@ -2328,6 +2919,7 @@ window.PK = {
   errs: [],
   storageOk: false,
   G: G,
+  LINK: LINK,
   refit: function () {
     if (G.cards.length) fitCameraToCards(G.cards, CAM.target.clone());
   },
@@ -2400,6 +2992,50 @@ window.PK = {
         setTimeout(function () { PK.dbg.tap(g[1]); }, i * 1700 + 400);
       });
       return groups.length;
+    },
+    /* ---------- 连连看 ---------- */
+    gotoLink: function (i) { UI.hideAll(); startLink(clamp(i || 0, 0, LINK_ROUNDS.length - 1)); },
+    linkInfo: function () {
+      let alive = 0;
+      for (let i = 0; i < G.cards.length; i++) if (G.cards[i].alive) alive++;
+      return {
+        round: G.linkRound, rows: LINK.rows, cols: LINK.cols, left: LINK.left,
+        tiles: alive, sel: LINK.sel ? 1 : 0, busy: LINK.busy,
+        moves: (G.mode === 'link') ? this.linkPairs().length : -1
+      };
+    },
+    linkPairs: function () {
+      const out = [];
+      const byKey = {};
+      for (let i = 0; i < G.cards.length; i++) {
+        const c = G.cards[i];
+        if (!c.alive) continue;
+        const k = c.suit + '_' + c.rank;
+        if (!byKey[k]) byKey[k] = [];
+        byKey[k].push(c);
+      }
+      Object.keys(byKey).forEach(function (k) {
+        const arr = byKey[k];
+        for (let i = 0; i < arr.length; i++) {
+          for (let j = i + 1; j < arr.length; j++) {
+            if (pathBetween(LINK.grid, LINK.rows, LINK.cols, arr[i], arr[j])) {
+              out.push([G.cards.indexOf(arr[i]), G.cards.indexOf(arr[j])]);
+            }
+          }
+        }
+      });
+      return out;
+    },
+    solveLink: function (n) {
+      const pairs = this.linkPairs();
+      const cnt = Math.min(n || pairs.length, pairs.length);
+      for (let i = 0; i < cnt; i++) {
+        (function (p, i) {
+          setTimeout(function () { onCardClick(G.cards[p[0]]); }, i * 950 + 60);
+          setTimeout(function () { onCardClick(G.cards[p[1]]); }, i * 950 + 300);
+        })(pairs[i], i);
+      }
+      return cnt;
     },
     goto: function (i) { UI.hideAll(); startLevel(clamp(i, 0, LEVELS.length - 1)); },
     study: function () { UI.hideAll(); startStudy(); },
