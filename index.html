@@ -184,6 +184,27 @@ h1.title {
 }
 .subtitle { margin: 0 auto 22px; font-size: 13.5px; line-height: 1.7; color: rgba(255,238,214,.66); max-width: 300px; }
 
+/* 难度选择 */
+.diff { display: flex; gap: 8px; justify-content: center; margin: -6px 0 10px; }
+.dchip {
+  font-family: inherit; cursor: pointer; outline: none;
+  padding: 8px 16px; border-radius: 999px; font-size: 13px; font-weight: 700;
+  letter-spacing: .05em; color: rgba(255,238,214,.58);
+  background: rgba(255,255,255,.06);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.14);
+  transition: color .16s, background .16s, box-shadow .16s, transform .1s;
+}
+.dchip:active { transform: scale(.96); }
+.dchip.on {
+  color: #3a2200;
+  background: linear-gradient(180deg, #ffe9b0, #ffc94f 55%, #f0a41f);
+  box-shadow: 0 4px 14px rgba(255,175,55,.32), inset 0 1px 0 rgba(255,255,255,.65);
+}
+.diffnote {
+  margin: 0 auto 16px; font-size: 11.5px; line-height: 1.5;
+  color: rgba(255,238,214,.44); min-height: 17px;
+}
+
 .btn {
   font-family: inherit; cursor: pointer; border: none; outline: none;
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
@@ -250,6 +271,8 @@ h1.title {
   #studyBar { gap: 8px; padding: 9px 10px 9px 14px; }
   #studyName { font-size: 16px; }
   #studyHint { font-size: 11.5px; }
+  .dchip { padding: 7px 12px; font-size: 12px; }
+  .diffnote { font-size: 11px; margin-bottom: 14px; }
 }
 
 @media screen and (max-width: 360px) {
@@ -257,6 +280,8 @@ h1.title {
   .pt b { font-size: 15px; }
   #prompt { padding: 9px 10px; }
   h1.title { font-size: 25px; }
+  .dchip { padding: 6px 10px; font-size: 11.5px; }
+  .diff { gap: 6px; }
 }
 
 @media screen and (max-height: 430px) and (orientation: landscape) {
@@ -271,6 +296,12 @@ h1.title {
   .brand { display: none; }
   .stars { margin-bottom: 10px; }
   .star { width: 34px; height: 34px; }
+  /* 横屏高度只有 390，难度选择和说明文字都要压扁，否则面板撑出屏幕 */
+  .diff { margin: 0 0 6px; gap: 6px; }
+  .dchip { padding: 5px 11px; font-size: 11.5px; }
+  .diffnote { display: none; }
+  .hintline { display: none; }
+  .btn-row { margin-top: 8px !important; }
 }
 
 </style>
@@ -318,6 +349,12 @@ h1.title {
       </div>
       <h1 class="title">扑克王国<br>找牌大冒险</h1>
       <p class="subtitle">认花色、认点数、找配对<br>8 个闯关 + 3 局连连看，边玩边把一副扑克认全</p>
+      <div class="diff" id="diffRow">
+        <button class="dchip" data-d="0">轻 松</button>
+        <button class="dchip" data-d="1">普 通</button>
+        <button class="dchip" data-d="2">挑 战</button>
+      </div>
+      <p class="diffnote" id="diffNote">牌少一点，干扰牌一眼就能分清</p>
       <button class="btn" id="btnStart">开 始 冒 险</button>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn ghost" id="btnLink">连 连 看</button>
@@ -1207,7 +1244,8 @@ const G = {
   hoverZ: 0.30,
   linkRound: 0,
   fps: 0,
-  level: 0
+  level: 0,
+  diff: 1                       /* 0 轻松 / 1 普通 / 2 挑战 */
 };
 
 let L = null;                    /* 当前关卡定义 */
@@ -1267,17 +1305,67 @@ function updateDecor(t) {
   }
 }
 
-/* ---------------- 关卡表 ---------------- */
-const LEVELS = [
-  { kind: 'suit', suit: 1, n: 10, count: 3, sub: '\u7ea2\u6843\u662f\u7ea2\u8272\u7684\u5fc3\u5f62' },
-  { kind: 'suit', suit: 0, n: 10, count: 3, sub: '\u9ed1\u6843\u50cf\u4e00\u7247\u53f6\u5b50' },
-  { kind: 'suit', suit: 2, n: 15, count: 3, sub: '\u6885\u82b1\u6709\u4e09\u7247\u5706\u74e3' },
-  { kind: 'rank', rank: 7, n: 15, count: 3, sub: '\u770b\u770b\u5de6\u4e0a\u89d2\u7684\u6570\u5b57' },
-  { kind: 'rank', rank: 13, n: 15, count: 3, sub: 'K \u5c31\u662f\u56fd\u738b King' },
-  { kind: 'exact', targets: [{ s: 0, r: 1 }], n: 15, sub: 'A \u662f\u6bcf\u4e2a\u82b1\u8272\u91cc\u6700\u5927\u7684' },
-  { kind: 'exact', targets: [{ s: 1, r: 12 }, { s: 3, r: 11 }], n: 18, sub: 'Q \u662f\u738b\u540e\uff0cJ \u662f\u6770\u514b' },
-  { kind: 'memory', pairs: 4, n: 8, sub: '\u5148\u7ffb\u4e00\u5f20\uff0c\u518d\u627e\u5b83\u7684\u5c0f\u4f19\u4f34' }
+/* ---------------- 难度 ----------------
+   三档不是简单把牌数乘个系数。认牌真正难的地方是**区分长得像的牌**，
+   所以"挑战"会故意多放和目标同色（找红桃时塞方块）、点数相邻（找 7 时塞 6 和 8）
+   的干扰牌；"轻松"则反过来，干扰牌尽量挑一眼就能分辨的。 */
+const DIFFS = [
+  {
+    id: 0, name: '\u8f7b\u677e', hint: '3-5 \u5c81',
+    memHold: 1.90, star3: 3, star2: 7, linkMin: 4,
+    mix: 'far', countAdj: -1
+  },
+  {
+    id: 1, name: '\u666e\u901a', hint: '5-7 \u5c81',
+    memHold: 1.35, star3: 1, star2: 3, linkMin: 3,
+    mix: 'any', countAdj: 0
+  },
+  {
+    id: 2, name: '\u6311\u6218', hint: '7 \u5c81+',
+    memHold: 0.70, star3: 0, star2: 1, linkMin: 2,
+    mix: 'near', countAdj: 1
+  }
 ];
+
+/* 同色的另一个花色：黑桃↔梅花、红桃↔方块。挑战档的干扰牌主要从这里取 */
+const SAME_COLOR = [2, 3, 0, 1];
+
+/* ---------------- 关卡表 ----------------
+   nByDiff 是 [轻松, 普通, 挑战] 三档的桌面牌数。
+   这些数都刻意挑了能整除的（8=4x2 / 9=3x3 / 12=4x3 / 15=5x3 / 18=6x3 / 20=5x4 / 24=6x4），
+   牌阵才能刚好铺满不出现空格。 */
+const LEVELS = [
+  { kind: 'suit', suit: 1, count: 3, nByDiff: [8, 10, 12], sub: '\u7ea2\u6843\u662f\u7ea2\u8272\u7684\u5fc3\u5f62' },
+  { kind: 'suit', suit: 0, count: 3, nByDiff: [8, 10, 12], sub: '\u9ed1\u6843\u50cf\u4e00\u7247\u53f6\u5b50' },
+  { kind: 'suit', suit: 2, count: 3, nByDiff: [9, 15, 20], sub: '\u6885\u82b1\u6709\u4e09\u7247\u5706\u74e3' },
+  { kind: 'rank', rank: 7, count: 3, nByDiff: [9, 15, 20], sub: '\u770b\u770b\u5de6\u4e0a\u89d2\u7684\u6570\u5b57' },
+  { kind: 'rank', rank: 13, count: 3, nByDiff: [9, 15, 20], sub: 'K \u5c31\u662f\u56fd\u738b King' },
+  { kind: 'exact', targets: [{ s: 0, r: 1 }], nByDiff: [9, 15, 20], sub: 'A \u662f\u6bcf\u4e2a\u82b1\u8272\u91cc\u6700\u5927\u7684' },
+  { kind: 'exact', targets: [{ s: 1, r: 12 }, { s: 3, r: 11 }], nByDiff: [12, 18, 24], sub: 'Q \u662f\u738b\u540e\uff0cJ \u662f\u6770\u514b' },
+  { kind: 'memory', pairs: 4, nByDiff: [6, 8, 12], sub: '\u5148\u7ffb\u4e00\u5f20\uff0c\u518d\u627e\u5b83\u7684\u5c0f\u4f19\u4f34' }
+];
+
+/* 按难度实例化一关（不污染 LEVELS 原表） */
+function levelDefFor(idx, diff) {
+  const base = LEVELS[idx];
+  const d = clamp(diff | 0, 0, DIFFS.length - 1);
+  const D = DIFFS[d];
+  const out = {
+    kind: base.kind, suit: base.suit, rank: base.rank, sub: base.sub,
+    targets: base.targets,
+    n: base.nByDiff[d],
+    diff: d,
+    mix: D.mix,
+    hold: D.memHold
+  };
+  if (base.kind === 'memory') {
+    out.pairs = Math.max(2, Math.round(base.nByDiff[d] / 2));
+    out.n = out.pairs * 2;
+  } else if (base.kind === 'suit' || base.kind === 'rank') {
+    out.count = clamp(base.count + D.countAdj, 2, 4);
+  }
+  return out;
+}
 
 /* ---------------- 几何缓存 ---------------- */
 function roundedRectShape(w, h, r) {
@@ -1400,33 +1488,94 @@ function genDeck(L, want) {
     out.push({ s: s, r: r });
     return true;
   };
+  const pick = function (arr) { return arr[Math.floor(Math.random() * arr.length)]; };
+  const wrapR = function (r) { return ((r - 1 + 13) % 13) + 1; };   /* 点数首尾相接 */
+  /* 点数环形距离：A(1) 和 K(13) 只差 1，所以排除"相近点数"时必须环形算 */
+  const dist13 = function (a, b) { const d = Math.abs(a - b); return Math.min(d, 13 - d); };
+  const mix = L.mix || 'any';
 
   if (L.kind === 'suit') {
     const ranks = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]).slice(0, L.count);
     for (let i = 0; i < ranks.length; i++) push(L.suit, ranks[i]);
+
+    /* 干扰牌：near 多给"同色的另一个花色"（找红桃时塞方块），far 反过来。
+       用配额而不是逐张掷骰子，否则样本只有十几张时比例会忽高忽低。 */
+    const same = SAME_COLOR[L.suit];
     const others = [0, 1, 2, 3].filter(function (s) { return s !== L.suit; });
+    const far = others.filter(function (s) { return s !== same; });
+    const pSame = mix === 'near' ? 0.68 : (mix === 'far' ? 0.22 : 0.46);
+
+    const need = wantN - out.length;
+    let sameLeft = Math.max(0, Math.round(need * pSame));
     let guard = 0;
-    while (out.length < wantN && guard++ < 1600) {
-      const s = others[Math.floor(Math.random() * others.length)];
-      const r = 1 + Math.floor(Math.random() * 13);
-      push(s, r);
+    while (out.length < wantN && guard++ < 2400) {
+      const left = wantN - out.length;
+      const useSame = sameLeft > 0 && Math.random() < (sameLeft / Math.max(1, left));
+      const s = useSame ? same : pick(far.length ? far : others);
+      if (push(s, 1 + Math.floor(Math.random() * 13)) && useSame) sameLeft--;
+    }
+    /* 同色配额还没用完（撞重复导致），补一轮 */
+    let g3 = 0;
+    while (sameLeft > 0 && out.length < wantN && g3++ < 400) {
+      if (push(same, 1 + Math.floor(Math.random() * 13))) sameLeft--;
     }
   } else if (L.kind === 'rank') {
     const suits = shuffle([0, 1, 2, 3]).slice(0, L.count);
     for (let i = 0; i < suits.length; i++) push(suits[i], L.rank);
+
+    /* 干扰牌：near 主给相邻点数（找 7 时塞 6、8），far 把目标附近全避开 */
+    const nearR = [wrapR(L.rank - 1), wrapR(L.rank + 1)];
+    /* 相邻点数只有 2×4=8 张，配额超过它时必须提前回退到随机点数，
+       否则循环会一直抽到已用完的牌、死循环到守卫耗尽，牌阵缺张 */
+    const nearAvail = function () {
+      let n = 0;
+      for (let k = 0; k < nearR.length; k++) {
+        for (let s = 0; s < 4; s++) if (!used[keyOf(s, nearR[k])]) n++;
+      }
+      return n;
+    };
+    const need = wantN - out.length;
+    let nearLeft = mix === 'near' ? Math.max(0, Math.round(need * 0.62)) : 0;
     let guard = 0;
-    while (out.length < wantN && guard++ < 1600) {
+    while (out.length < wantN && guard++ < 2400) {
       const s = Math.floor(Math.random() * 4);
-      let r = 1 + Math.floor(Math.random() * 13);
-      if (r === L.rank) r = (r % 13) + 1;
-      push(s, r);
+      const left = wantN - out.length;
+      let r;
+      const useNear = nearLeft > 0 && nearAvail() > 0;
+      if (useNear && Math.random() < (nearLeft / Math.max(1, left))) {
+        r = pick(nearR);
+      } else if (mix === 'far') {
+        let g2 = 0;
+        do { r = 1 + Math.floor(Math.random() * 13); }
+        while (dist13(r, L.rank) <= 2 && g2++ < 200);
+      } else {
+        r = 1 + Math.floor(Math.random() * 13);
+      }
+      if (r === L.rank) continue;
+      const isNear = dist13(r, L.rank) === 1;
+      if (push(s, r) && isNear && nearLeft > 0) nearLeft--;
     }
   } else if (L.kind === 'exact') {
     for (let i = 0; i < L.targets.length; i++) push(L.targets[i].s, L.targets[i].r);
+
+    /* 干扰牌：near 时一半做成"同花色相邻点数"或"同点数换个花色" */
+    const otherSuits = [0, 1, 2, 3];
     let guard = 0;
-    while (out.length < wantN && guard++ < 1600) {
-      const s = Math.floor(Math.random() * 4);
-      const r = 1 + Math.floor(Math.random() * 13);
+    while (out.length < wantN && guard++ < 2400) {
+      let s, r;
+      if (mix === 'near' && Math.random() < 0.50) {
+        const t = pick(L.targets);
+        if (Math.random() < 0.5) {
+          s = t.s;
+          r = wrapR(t.r + (Math.random() < 0.5 ? -1 : 1));
+        } else {
+          s = pick(otherSuits.filter(function (x) { return x !== t.s; }));
+          r = t.r;
+        }
+      } else {
+        s = Math.floor(Math.random() * 4);
+        r = 1 + Math.floor(Math.random() * 13);
+      }
       let isT = false;
       for (let i = 0; i < L.targets.length; i++) {
         if (L.targets[i].s === s && L.targets[i].r === r) { isT = true; break; }
@@ -1503,11 +1652,25 @@ function placeBoard(rows, syOverride) {
   return by;
 }
 
-/* ---------------- 列数选择 ---------------- */
+/* ---------------- 列数选择 ----------------
+   牌数随难度变化后，写死「n<=10 就 5 列」会让 8 张牌也铺成 5x2 加两个空格。
+   这里按 √(n × 屏比系数) 找最接近的列数，并要求能整除，牌阵才不会留空位。 */
 function pickCols(n, L) {
   const aspect = window.innerWidth / window.innerHeight;
   const portrait = aspect < 0.95;
   if (L.kind === 'memory') return portrait ? 3 : 4;
+
+  const want = Math.sqrt(n * (portrait ? 0.85 : 1.35));
+  let best = 0, bestD = 99;
+  for (let c = 3; c <= 7; c++) {
+    if (n % c !== 0) continue;
+    const r = n / c;
+    if (r < 2 || r > 6) continue;
+    const d = Math.abs(c - want);
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  if (best) return best;
+
   if (n <= 6) return 3;
   if (n <= 10) return portrait ? 3 : 5;
   if (n <= 12) return portrait ? 3 : 4;
@@ -1527,7 +1690,7 @@ function startLevel(idx) {
 
   G.level = idx;
   if (idx < 0) idx = 0;
-  L = LEVELS[idx];
+  L = levelDefFor(idx, G.diff);
   G.state = 'playing';
   G.wrong = 0;
   G.combo = 0;
@@ -1784,7 +1947,7 @@ function checkMemory() {
     UI.updateHud();
 
     TW.add({
-      tag: 'card', dur: 0.30, delay: 0.55, ease: easeOutCubic,
+      tag: 'card', dur: 0.30, delay: (L.hold || 1.35), ease: easeOutCubic,
       onUpdate: function (k) {
         a.spin.rotation.y = k * Math.PI;
         b.spin.rotation.y = k * Math.PI;
@@ -1802,7 +1965,9 @@ function checkMemory() {
 /* ---------------- 过关 ---------------- */
 function levelClear() {
   G.state = 'clear';
-  G.stars = G.wrong === 0 ? 3 : (G.wrong <= 2 ? 2 : 1);
+  /* 星级门槛跟着难度走：轻松档多错几次也能拿三星，挑战档几乎零失误才行 */
+  const D = DIFFS[clamp(G.diff | 0, 0, DIFFS.length - 1)];
+  G.stars = G.wrong <= D.star3 ? 3 : (G.wrong <= D.star2 ? 2 : 1);
   G.score += 20 + G.stars * 10;
 
   SFX.win();
@@ -1937,12 +2102,32 @@ const LINK = {
   pathGroup: null
 };
 
-/* 每局棋盘尺寸；竖屏单独给一套（列数少、行数多） */
-const LINK_ROUNDS = [
-  { cols: 4, rows: 3, p: { cols: 3, rows: 4 } },   /* 12 张 / 6 对 */
-  { cols: 5, rows: 4, p: { cols: 4, rows: 5 } },   /* 20 张 / 10 对 */
-  { cols: 6, rows: 4, p: { cols: 4, rows: 6 } }    /* 24 张 / 12 对 */
+/* 每局棋盘尺寸，按难度给三套；竖屏单独一套（列数少、行数多）
+   轻松 8/12/16 · 普通 12/20/24 · 挑战 16/24/30 */
+const LINK_ROUNDS_BY_DIFF = [
+  [
+    { cols: 4, rows: 2, p: { cols: 4, rows: 2 } },   /*  8 张 */
+    { cols: 4, rows: 3, p: { cols: 3, rows: 4 } },   /* 12 张 */
+    { cols: 4, rows: 4, p: { cols: 4, rows: 4 } }    /* 16 张 */
+  ],
+  [
+    { cols: 4, rows: 3, p: { cols: 3, rows: 4 } },   /* 12 张 / 6 对 */
+    { cols: 5, rows: 4, p: { cols: 4, rows: 5 } },   /* 20 张 / 10 对 */
+    { cols: 6, rows: 4, p: { cols: 4, rows: 6 } }    /* 24 张 / 12 对 */
+  ],
+  [
+    { cols: 4, rows: 4, p: { cols: 4, rows: 4 } },   /* 16 张 */
+    { cols: 6, rows: 4, p: { cols: 4, rows: 6 } },   /* 24 张 */
+    { cols: 6, rows: 5, p: { cols: 5, rows: 6 } }    /* 30 张 */
+  ]
 ];
+
+function linkRoundsFor(d) {
+  return LINK_ROUNDS_BY_DIFF[clamp(d | 0, 0, LINK_ROUNDS_BY_DIFF.length - 1)];
+}
+
+/* 当前难度对应的三局，startLink 里会同步 */
+let LINK_ROUNDS = LINK_ROUNDS_BY_DIFF[1];
 
 /* ---------------- 坐标 ---------------- */
 function cellPos(r, c) {
@@ -2163,6 +2348,8 @@ function startLink(round) {
   clearCards();
 
   G.mode = 'link';
+  /* 难度换了，三局的棋盘尺寸也跟着换 */
+  LINK_ROUNDS = linkRoundsFor(G.diff);
   G.linkRound = clamp(round, 0, LINK_ROUNDS.length - 1);
   LINK.active = true;
   LINK.sel = null;
@@ -2197,10 +2384,12 @@ function startLink(round) {
     LINK.grid.push(row);
   }
 
-  /* 满盘时可选对很少，开局强制至少 3 个可消对，手感才不至于一上来就卡住 */
+  /* 满盘时可选对很少。开局强制留出若干个可消对，手感才不至于一上来就卡住。
+     轻松档多给几条活路，挑战档故意收紧（2 对，需要自己想清楚先动哪一步）。 */
+  const wantMin = DIFFS[clamp(G.diff | 0, 0, DIFFS.length - 1)].linkMin;
   let bestOrder = null;
   let bestMoves = -1;
-  for (let t = 0; t < 80; t++) {
+  for (let t = 0; t < 120; t++) {
     shuffle(deck);
     let k = 0;
     for (let r = 1; r <= rows; r++) {
@@ -2211,9 +2400,9 @@ function startLink(round) {
     }
     const m = countMoves(LINK.grid, rows, cols);
     if (m > bestMoves) { bestMoves = m; bestOrder = deck.slice(); }
-    if (m >= 3) break;
+    if (m >= wantMin) break;
   }
-  if (bestMoves < 3 && bestOrder) {
+  if (bestMoves < wantMin && bestOrder) {
     let k = 0;
     for (let r = 1; r <= rows; r++) {
       for (let c = 1; c <= cols; c++) {
@@ -2438,7 +2627,8 @@ function reshuffle() {
 /* ---------------- 过关 ---------------- */
 function linkClear() {
   G.state = 'clear';
-  G.stars = G.wrong === 0 ? 3 : (G.wrong <= 2 ? 2 : 1);
+  const D = DIFFS[clamp(G.diff | 0, 0, DIFFS.length - 1)];
+  G.stars = G.wrong <= D.star3 ? 3 : (G.wrong <= D.star2 ? 2 : 1);
   SFX.win();
   VOICE.say('\u5168\u90e8\u6d88\u5b8c\u5566');
   TW.add({
@@ -2474,7 +2664,8 @@ const UI = {
       'promptSub', 'btnSay', 'btnSound', 'btnStudy', 'btnStudyExit', 'toast',
       'scrStart', 'scrClear', 'scrEnd', 'clearStars', 'clearTitle', 'clearSub',
       'btnNext', 'btnReplay', 'btnMenu', 'btnAgain', 'endStars', 'endSub',
-      'btnStart', 'btnContinue', 'btnLink', 'endTitle', 'studyBar', 'studyName', 'studyHint'];
+      'btnStart', 'btnContinue', 'btnLink', 'endTitle', 'studyBar', 'studyName', 'studyHint',
+      'diffRow', 'diffNote'];
     for (let i = 0; i < ids.length; i++) this.el[ids[i]] = document.getElementById(ids[i]);
   },
 
@@ -2671,6 +2862,32 @@ const UI = {
   }
 };
 
+/* ---------------- 难度 ---------------- */
+const DIFF_NOTE = [
+  '\u724c\u5c11\u4e00\u70b9\uff0c\u5e72\u6270\u724c\u4e00\u773c\u5c31\u80fd\u5206\u6e05',
+  '\u6807\u51c6\u724c\u91cf\uff0c\u5076\u5c14\u4f1a\u770b\u8d70\u773c',
+  '\u724c\u66f4\u5bc6\uff0c\u8fd8\u4f1a\u6545\u610f\u653e\u957f\u5f97\u50cf\u7684\u724c'
+];
+
+function setDiff(d, persistIt) {
+  d = clamp(d | 0, 0, DIFFS.length - 1);
+  const changed = (G.diff !== d);
+  G.diff = d;
+  renderDiff();
+  if (persistIt !== false) persist();
+  return changed;
+}
+
+function renderDiff() {
+  if (UI.el.diffRow) {
+    const chips = UI.el.diffRow.querySelectorAll('.dchip');
+    for (let i = 0; i < chips.length; i++) {
+      chips[i].classList.toggle('on', (+chips[i].getAttribute('data-d')) === G.diff);
+    }
+  }
+  if (UI.el.diffNote) UI.el.diffNote.textContent = DIFF_NOTE[G.diff] || '';
+}
+
 /* ---------------- 存档 ---------------- */
 function loadSave() {
   try {
@@ -2685,7 +2902,7 @@ function loadSave() {
 function persist() {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
-      unlock: G.unlock, stars: G.totalStars, score: G.score
+      unlock: G.unlock, stars: G.totalStars, score: G.score, diff: G.diff
     }));
   } catch (e) { /* ignore */ }
 }
@@ -2795,6 +3012,22 @@ function boot() {
     G.unlock = clamp(save.unlock, 0, LEVELS.length);
     G.totalStars = save.stars;
     G.score = save.score || 0;
+    if (typeof save.diff === 'number') G.diff = clamp(save.diff, 0, DIFFS.length - 1);
+  }
+  renderDiff();
+
+  /* 难度切换 */
+  if (UI.el.diffRow) {
+    UI.el.diffRow.addEventListener('click', function (e) {
+      const b = e.target.closest ? e.target.closest('.dchip') : null;
+      if (!b) return;
+      const d = +b.getAttribute('data-d');
+      if (d === G.diff) return;
+      SFX.unlock();
+      SFX.tap();
+      setDiff(d);
+      VOICE.say(DIFFS[d].name + '\u96be\u5ea6');
+    });
   }
 
   if (G.unlock > 0 && G.unlock < LEVELS.length) {
@@ -2956,11 +3189,16 @@ window.PK = {
     info: function () {
       return {
         state: G.state, level: G.level, remaining: G.remaining, total: G.total,
-        wrong: G.wrong, score: G.score, cards: G.cards.length,
+        wrong: G.wrong, score: G.score, cards: G.cards.length, diff: G.diff,
         tris: renderer.info.render.triangles, calls: renderer.info.render.calls, fps: G.fps,
         errs: window.PK.errs.length, fit: G_FIT
       };
     },
+    diff: function () {
+      const D = DIFFS[clamp(G.diff | 0, 0, DIFFS.length - 1)];
+      return { id: G.diff, name: D.name, mix: D.mix, memHold: D.memHold, linkMin: D.linkMin };
+    },
+    setDiff: function (d) { setDiff(d); return G.diff; },
     cards: function () {
       return G.cards.map(function (c, i) {
         return { i: i, s: c.suit, r: c.rank, alive: c.alive, up: c.faceUp, tgt: (L && L.kind !== 'memory') ? isTarget(c) : null };
