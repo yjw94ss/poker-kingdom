@@ -1015,8 +1015,11 @@ function applyCamera() {
   camera.updateMatrixWorld();
 }
 
+/* 连连看要绕棋盘外圈连线，顶部得比任务条再让出一点空间，
+   否则外圈横线会钻到任务条背后被截成"断线"。
+   由调用方传 padTop（像素），默认 12。 */
 /* 用卡片的包围盒反解距离，保证任何屏幕比例下都刚好铺满 */
-function fitCameraToCards(cards, targetVec, safeBot) {
+function fitCameraToCards(cards, targetVec, safeBot, padTop) {
   if (!cards || !cards.length) { applyCamera(); return; }
   scene.updateMatrixWorld(true);
 
@@ -1049,13 +1052,14 @@ function fitCameraToCards(cards, targetVec, safeBot) {
   const SAFE_X = 0.84;
   let SAFE_TOP = 0.64;
   let SAFE_BOT = (typeof safeBot === 'number') ? safeBot : -0.90;
+  const padT = (typeof padTop === 'number') ? padTop : 12;
 
   const H = window.innerHeight;
   const promptEl = document.getElementById('prompt');
   if (promptEl) {
     const r = promptEl.getBoundingClientRect();
     if (r.height > 0 && r.bottom > 0) {
-      SAFE_TOP = clamp(1 - 2 * (r.bottom + 12) / H, 0.10, 0.86);
+      SAFE_TOP = clamp(1 - 2 * (r.bottom + padT) / H, 0.10, 0.86);
     }
   }
   const barEl = document.getElementById('studyBar');
@@ -1925,8 +1929,8 @@ const LINK = {
   grid: null,        /* (rows+2) x (cols+2)，外圈为可通行的空位 */
   rows: 0,
   cols: 0,
-  sx: 1.06,          /* 牌位间距（比闯关模式更紧凑，形成"牌阵"） */
-  sy: 1.48,
+  sx: 1.09,          /* 牌位间距（比闯关模式更紧凑，形成"牌阵"） */
+  sy: 1.54,
   sel: null,
   left: 0,
   busy: false,
@@ -1946,6 +1950,23 @@ function cellPos(r, c) {
     x: (c - 1 - (LINK.cols - 1) / 2) * LINK.sx,
     y: ((LINK.rows - 1) / 2 - (r - 1)) * LINK.sy
   };
+}
+
+/* 连线用坐标：绕棋盘外圈时应贴在"牌阵外沿"之外一点点，
+   而不是按行距比例缩一小格 —— 行距只比牌高 0.12，
+   按比例收缩会把线画进牌身里。 */
+const LINK_EDGE = 0.20;
+function pathPos(p) {
+  const q = cellPos(p.r, p.c);
+  const topY = cellPos(1, p.c).y + CARD_H / 2;          /* 首排牌顶 */
+  const botY = cellPos(LINK.rows, p.c).y - CARD_H / 2;   /* 末排牌底 */
+  const lftX = cellPos(1, 1).x - CARD_W / 2;             /* 首列牌左 */
+  const rgtX = cellPos(1, LINK.cols).x + CARD_W / 2;     /* 末列牌右 */
+  if (p.r === 0) q.y = topY + LINK_EDGE;
+  else if (p.r === LINK.rows + 1) q.y = botY - LINK_EDGE;
+  if (p.c === 0) q.x = lftX - LINK_EDGE;
+  else if (p.c === LINK.cols + 1) q.x = rgtX + LINK_EDGE;
+  return q;
 }
 
 function cellEmpty(grid, rows, cols, r, c) {
@@ -2081,8 +2102,8 @@ function drawLinkPath(pts) {
 
   const segs = [];
   for (let i = 0; i < pts.length - 1; i++) {
-    const a = cellPos(pts[i].r, pts[i].c);
-    const b = cellPos(pts[i + 1].r, pts[i + 1].c);
+    const a = pathPos(pts[i]);
+    const b = pathPos(pts[i + 1]);
     const dx = b.x - a.x, dy = b.y - a.y;
     const len = Math.sqrt(dx * dx + dy * dy);
     if (len < 0.001) continue;
@@ -2250,7 +2271,9 @@ function startLink(round) {
   }
 
   const by = placeBoard(rows, LINK.sy);
-  fitCameraToCards(G.cards, new THREE.Vector3(0, by, -0.15));
+  /* 顶部多留一点，给"绕棋盘外圈"的连线腾地方 */
+  fitCameraToCards(G.cards, new THREE.Vector3(0, by, -0.15), null,
+    clamp(window.innerHeight * 0.09, 22, 52));
 
   UI.enterLink(G.linkRound, pairs);
   VOICE.say('\u70b9\u4e24\u5f20\u4e00\u6837\u7684\u724c\uff0c\u628a\u5b83\u4eec\u8fde\u8d77\u6765');
@@ -2895,7 +2918,8 @@ function boot() {
       onResize();
       if (G.cards.length) {
         let savedTarget = CAM.target.clone();
-        fitCameraToCards(G.cards, savedTarget);
+        const padTop = (G.mode === 'link') ? clamp(window.innerHeight * 0.09, 22, 52) : 12;
+        fitCameraToCards(G.cards, savedTarget, null, padTop);
       }
     }, 180);
   });
@@ -2921,7 +2945,10 @@ window.PK = {
   G: G,
   LINK: LINK,
   refit: function () {
-    if (G.cards.length) fitCameraToCards(G.cards, CAM.target.clone());
+    if (G.cards.length) {
+      const padTop = (G.mode === 'link') ? clamp(window.innerHeight * 0.09, 22, 52) : 12;
+      fitCameraToCards(G.cards, CAM.target.clone(), null, padTop);
+    }
   },
   dbg: {
     state: function () { return G.state; },
@@ -3003,6 +3030,12 @@ window.PK = {
         tiles: alive, sel: LINK.sel ? 1 : 0, busy: LINK.busy,
         moves: (G.mode === 'link') ? this.linkPairs().length : -1
       };
+    },
+    /* 两张牌之间的转折点序列（含外圈），用于验证绕行路径 */
+    pathOf: function (i, j) {
+      const a = G.cards[i], b = G.cards[j];
+      if (!a || !b) return null;
+      return pathBetween(LINK.grid, LINK.rows, LINK.cols, a, b);
     },
     linkPairs: function () {
       const out = [];
