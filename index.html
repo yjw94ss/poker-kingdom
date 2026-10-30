@@ -107,12 +107,23 @@ button.ico.off { opacity: .45; }
 .pi span { font-family: Georgia, serif; }
 .pt { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .pt b { font-size: 19px; font-weight: 800; letter-spacing: .02em; color: #fff3dc; line-height: 1.2; }
-.pt span { font-size: 12.5px; color: rgba(255,236,208,.62); line-height: 1.2; }
+.pt span { font-size: 12.5px; color: rgba(255,236,208,.62); line-height: 1.2; transition: color .15s ease; }
+.pt span.alert {
+  color: #ffb0b8; font-weight: 800; font-size: 13.5px;
+  animation: alertNudge .45s cubic-bezier(.36,.07,.19,.97);
+}
+@keyframes alertNudge {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-5px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
 .speak { flex: none; pointer-events: auto; }
 
 /* ================= 提示浮字 ================= */
 .toast {
-  position: absolute; left: 50%; top: 76%; transform: translate(-50%, 0) scale(.9);
+  position: absolute; left: 50%; top: 32%; transform: translate(-50%, 0) scale(.9);
   padding: 10px 20px; border-radius: 999px; font-size: 16px; font-weight: 800;
   opacity: 0; pointer-events: none; white-space: nowrap;
   transition: opacity .2s ease, transform .2s ease;
@@ -1898,6 +1909,7 @@ function renderStarsTo(host, n, animate) {
 const UI = {
   el: {},
   toastTimer: 0,
+  subBase: null,
 
   init: function () {
     const ids = ['gl', 'ui', 'hud', 'lvLabel', 'pips', 'scoreNum', 'promptIcon', 'promptMain',
@@ -1947,6 +1959,7 @@ const UI = {
     }
     this.el.promptIcon.className = 'pi' + (multi ? ' multi' : '');
     this.el.promptIcon.innerHTML = iconHtml;
+    this.clearAlert();
     this.el.promptSub.textContent = L.sub || '';
 
     this.buildPips();
@@ -1978,11 +1991,36 @@ const UI = {
   },
 
   showToast: function (text, type) {
+    /* 点对：用浮动药丸做庆祝（此时牌已飞走，不挡视线）
+       点错：写回任务条的副标题——绝不能盖住孩子正要观察的那张牌 */
+    if (type === 'bad') {
+      const sub = this.el.promptSub;
+      if (this.subBase === null) this.subBase = sub.textContent;
+      sub.textContent = text;
+      sub.classList.remove('alert');
+      void sub.offsetWidth;
+      sub.classList.add('alert');
+      clearTimeout(this.toastTimer);
+      const self = this;
+      this.toastTimer = setTimeout(function () {
+        sub.classList.remove('alert');
+        sub.textContent = self.subBase === null ? '' : self.subBase;
+        self.subBase = null;
+      }, 2200);
+      return;
+    }
     const t = this.el.toast;
     t.textContent = text;
     t.className = 'toast on ' + (type || '');
     clearTimeout(this.toastTimer);
-    this.toastTimer = setTimeout(function () { t.className = 'toast'; }, 1500);
+    this.toastTimer = setTimeout(function () { t.className = 'toast'; }, 1400);
+  },
+
+  clearAlert: function () {
+    clearTimeout(this.toastTimer);
+    this.subBase = null;
+    this.el.toast.className = 'toast';
+    this.el.promptSub.classList.remove('alert');
   },
 
   showClear: function () {
@@ -2019,6 +2057,7 @@ const UI = {
     this.el.hud.classList.add('on');
     this.el.promptIcon.innerHTML = '<span class="blk">\u8bfb</span>';
     this.el.promptMain.textContent = '\u8ba4\u724c\u672c\uff1a\u70b9\u4e00\u5f20\u724c';
+    this.clearAlert();
     this.el.promptSub.textContent = '\u5b83\u4f1a\u544a\u8bc9\u4f60\u8fd9\u662f\u4ec0\u4e48\u724c';
     this.el.pips.innerHTML = '';
     this.el.lvLabel.textContent = '\u8ba4\u724c\u672c';
