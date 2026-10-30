@@ -73,6 +73,18 @@ button.ico:active { transform: scale(.94); }
 button.ico.sq { padding: 7px 9px; font-size: 15px; }
 button.ico.off { opacity: .45; }
 
+/* 回首页：HUD 左侧的小房子，比别处更低调，避免和任务条抢注意力 */
+button.ico.home {
+  padding: 0; width: 30px; height: 30px; border-radius: 10px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none; color: #ffe0ab;
+  background: rgba(255,206,122,.13); border-color: rgba(255,206,122,.30);
+}
+/* 只在 HUD 可见时可点，否则首页左上角会有一块看不见的热区 */
+#hud.on button.ico.home { pointer-events: auto; }
+button.ico.home svg { display: block; }
+button.ico.home:hover { background: rgba(255,206,122,.22); color: #ffe4b0; }
+
 /* ================= 任务条 ================= */
 #prompt {
   align-self: center; margin-top: 12px;
@@ -313,6 +325,12 @@ h1.title {
   <div id="ui">
     <header id="hud">
       <div class="hud-left">
+        <button id="btnHome" class="ico sq home" aria-label="回到首页" title="回到首页">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <path d="M12 3.4 3.2 10.7V20.6h6.1v-5.9h5.4v5.9h6.1V10.7z"
+                  fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round"/>
+          </svg>
+        </button>
         <span class="lv" id="lvLabel">第 1 关</span>
         <span class="pips" id="pips"></span>
       </div>
@@ -371,7 +389,10 @@ h1.title {
       <div class="clear-title" id="clearTitle">太棒了！</div>
       <div class="clear-sub" id="clearSub"></div>
       <button class="btn" id="btnNext">下 一 关</button>
-      <div style="margin-top:12px"><button class="btn ghost" id="btnReplay">再玩这一关</button></div>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn ghost" id="btnReplay">再玩这一关</button>
+        <button class="btn ghost" id="btnMenuClear">回到首页</button>
+      </div>
     </div>
   </div>
 
@@ -2675,7 +2696,7 @@ const UI = {
       'scrStart', 'scrClear', 'scrEnd', 'clearStars', 'clearTitle', 'clearSub',
       'btnNext', 'btnReplay', 'btnMenu', 'btnAgain', 'endStars', 'endSub',
       'btnStart', 'btnContinue', 'btnLink', 'endTitle', 'studyBar', 'studyName', 'studyHint',
-      'diffRow', 'diffNote'];
+      'diffRow', 'diffNote', 'btnHome', 'btnMenuClear'];
     for (let i = 0; i < ids.length; i++) this.el[ids[i]] = document.getElementById(ids[i]);
   },
 
@@ -2898,6 +2919,45 @@ function renderDiff() {
   if (UI.el.diffNote) UI.el.diffNote.textContent = DIFF_NOTE[G.diff] || '';
 }
 
+/* ---------------- 首页 ---------------- */
+function refreshContinue() {
+  const b = UI.el.btnContinue;
+  if (!b) return;
+  if (G.unlock >= LEVELS.length) {
+    b.style.display = 'inline-flex';
+    b.textContent = '\u91cd\u73a9\u7b2c 1 \u5173';
+  } else if (G.unlock > 0) {
+    b.style.display = 'inline-flex';
+    b.textContent = '\u7ee7\u7eed\u7b2c ' + (G.unlock + 1) + ' \u5173';
+  } else {
+    b.style.display = 'none';
+  }
+}
+
+/* 回首页：关卡中 / 连连看中 / 认牌本里都能一键退出，并把场景清干净 */
+function goHome() {
+  TW.kill('card');
+  TW.kill('ring');
+  TW.kill('link');
+  if (typeof clearLinkPath === 'function') clearLinkPath();
+  if (typeof clearCards === 'function') clearCards();
+  if (typeof LINK !== 'undefined') { LINK.active = false; LINK.sel = null; LINK.busy = false; }
+  G.state = 'idle';
+  G.mode = 'level';
+  G.studyBack = -1;
+  G.hover = null;
+  G.memFlip = [];
+  G.memLock = false;
+  UI.hideAll();
+  UI.el.ui.classList.remove('on');
+  UI.el.hud.classList.remove('on');
+  UI.el.studyBar.classList.remove('on');
+  refreshContinue();
+  renderDiff();
+  showDecor();
+  UI.show('scrStart');
+}
+
 /* ---------------- 存档 ---------------- */
 function loadSave() {
   try {
@@ -3040,17 +3100,7 @@ function boot() {
     });
   }
 
-  if (G.unlock > 0 && G.unlock < LEVELS.length) {
-    UI.el.btnContinue.style.display = 'inline-flex';
-    UI.el.btnContinue.textContent = '\u7ee7\u7eed\u7b2c ' + (G.unlock + 1) + ' \u5173';
-  } else {
-    UI.el.btnContinue.style.display = 'none';
-  }
-
-  if (G.unlock >= LEVELS.length) {
-    UI.el.btnContinue.style.display = 'inline-flex';
-    UI.el.btnContinue.textContent = '\u91cd\u73a9\u7b2c 1 \u5173';
-  }
+  refreshContinue();
 
   /* 开始按钮 */
   UI.el.btnStart.addEventListener('click', function () {
@@ -3088,11 +3138,7 @@ function boot() {
     if (back >= 0) {
       startLevel(back);
     } else {
-      G.state = 'idle';
-      UI.el.ui.classList.remove('on');
-      UI.el.hud.classList.remove('on');
-      showDecor();
-      UI.show('scrStart');
+      goHome();
     }
   });
 
@@ -3136,15 +3182,19 @@ function boot() {
     if (G.mode === 'link') { startLink(G.linkRound); return; }
     startLevel(G.level);
   });
-  UI.el.btnMenu.addEventListener('click', function () {
-    UI.hideAll();
-    UI.el.ui.classList.remove('on');
-    G.state = 'idle';
-    G.mode = 'level';
-    if (typeof clearLinkPath === 'function') clearLinkPath();
-    showDecor();
-    UI.show('scrStart');
-  });
+  /* 回首页 */
+  if (UI.el.btnHome) {
+    UI.el.btnHome.addEventListener('click', function () {
+      SFX.unlock();
+      SFX.tap();
+      goHome();
+    });
+  }
+
+  UI.el.btnMenu.addEventListener('click', function () { goHome(); });
+  if (UI.el.btnMenuClear) {
+    UI.el.btnMenuClear.addEventListener('click', function () { goHome(); });
+  }
   UI.el.btnAgain.addEventListener('click', function () {
     SFX.unlock();
     G.score = 0; G.totalStars = 0; G.unlock = 0; persist();
